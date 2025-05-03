@@ -53,7 +53,12 @@ app.use(cors({
    origin: 'http://localhost:3000', 
    credentials: true, // Allow credentials (cookies, authorization headers, etc.)
 }));
-
+app.get('/',(req,res)=>{
+  res.send({
+    activeState:true,
+    error:false,
+  })
+})
 // Serve uploaded files statically
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
