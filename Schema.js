@@ -8,6 +8,7 @@ const userSchema = mongoose.Schema({
   password: { type: String, required: 'Password is require' },
   phone: { type: Number, required: 'Phone is require' }, 
   userType: { type: String, required: 'UserType is require' },
+  district: { type: String, required: 'District is require' },
 }, {
   timestamps: true,
 });
@@ -32,17 +33,22 @@ const complaintSchema = mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, required: true, ref: "user_Schema" },
   name: { type: String, required: true },
   address: { type: String, required: true },
-  taluk: { type: String, required: true }, // Added Taluk field
-  wardNo: { type: String, required: true }, // Added Ward No./Street Name field
+  taluk: { type: String, required: true },
+  wardNo: { type: String, required: true },
   pincode: { type: Number, required: true },
   department: { type: String, required: true },
   comment: { type: String, required: true },
   status: { type: String, required: true },
-  // Added new fields for tracking assignment
   assigned: { type: Boolean, default: false },
-  agentName: { type: String, default: "" }
-  //city: { type: String, required: true },
-  //state: { type: String, required: true },
+  agentName: { type: String, default: "" },
+  images: [{ type: String }], // Array of image paths
+  createdAt: { type: Date, default: Date.now },
+  canEscalate: { type: Boolean, default: false },
+  escalated: { type: Boolean, default: false },
+  escalationReason: { type: String },
+  escalationDate: { type: Date }
+}, {
+  timestamps: true
 });
   
 const ComplaintSchema = mongoose.model("complaint_schema", complaintSchema);
@@ -55,6 +61,8 @@ const assignedComplaint = mongoose.Schema({
   agentName: { type: String, required: true },
   // Add a reference to store complaint details for easy access
   complaintDetails: { type: Object }
+}, {
+  timestamps: true
 });
 
 const AssignedComplaint = mongoose.model("assigned_complaint", assignedComplaint);

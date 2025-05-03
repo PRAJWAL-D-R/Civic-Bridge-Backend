@@ -1,5 +1,8 @@
 const express = require("express");
 const cors = require("cors");
+const multer = require("multer");
+const path = require("path");
+const fs = require("fs");
 require("./config");
 const {
   ComplaintSchema,
@@ -10,12 +13,66 @@ const {
 const app = express();
 const PORT = 8000;
 
+// Create uploads directory if it doesn't exist
+const uploadDir = path.join(__dirname, "uploads");
+if (!fs.existsSync(uploadDir)) {
+  fs.mkdirSync(uploadDir, { recursive: true });
+}
+
+// Configure multer for file uploads
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, uploadDir);
+  },
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    const ext = path.extname(file.originalname);
+    cb(null, file.fieldname + '-' + uniqueSuffix + ext);
+  },
+});
+
+// File filter to only accept images
+const fileFilter = (req, file, cb) => {
+  const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png'];
+  if (allowedTypes.includes(file.mimetype)) {
+    cb(null, true);
+  } else {
+    cb(new Error("Invalid file type. Only JPG, JPEG and PNG are allowed."), false);
+  }
+};
+
+const upload = multer({
+  storage,
+  fileFilter,
+  limits: { fileSize: 5 * 1024 * 1024 } // 5MB limit
+});
+
 /**************************************** */
 app.use(express.json());
 app.use(cors({
-   origin: 'http://localhost:3000', // Replace with your frontend's URL
+   origin: 'http://localhost:3000', 
    credentials: true, // Allow credentials (cookies, authorization headers, etc.)
 }));
+
+// Serve uploaded files statically
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+
+// Error handling middleware for multer
+app.use((err, req, res, next) => {
+  if (err instanceof multer.MulterError) {
+    if (err.code === 'LIMIT_FILE_SIZE') {
+      return res.status(400).json({ error: 'File is too large. Maximum size is 5MB.' });
+    }
+    if (err.code === 'LIMIT_UNEXPECTED_FILE') {
+      return res.status(400).json({ error: 'Maximum 5 images allowed.' });
+    }
+    return res.status(400).json({ error: err.message });
+  } else if (err) {
+    return res.status(500).json({ error: err.message });
+  }
+  next();
+});
+
 /********************************************** */
 // Get all assigned complaints - Updated to include detailed complaint information
 app.get("/assignedComplaints", async (req, res) => {
@@ -272,6 +329,7 @@ app.get("/AgentUsers/:agentId", async (req, res) => {
     return res.status(500).json({ error: "Internal Server Error" });
   }
 });
+
 ////////////for deleting the user from admin portal////////////////
 app.delete("/OrdinaryUsers/:id", async (req, res) => {
   try {
@@ -291,20 +349,37 @@ app.delete("/OrdinaryUsers/:id", async (req, res) => {
 });
 
 ///////////////complaint register by user and its status checking///////////////
-app.post("/Complaint/:id", async (req, res) => {
-  const UserId = req.params.id;
+app.post("/Complaint/:userId", upload.array('images', 5), async (req, res) => {
   try {
-    const user = await UserSchema.findById(UserId);
-    if (!user) {
-      return res.status(404).json({ error: "User not found" });
-    } else {
-      const complaint = new ComplaintSchema(req.body);
-      let resultComplaint = await complaint.save();
-      res.send(resultComplaint).status(200);
-    }
+    const { userId } = req.params;
+    const { name, address, pincode, taluk, wardNo, department, district, comment } = req.body;
+    
+    // Get the file paths for uploaded images
+    const imagePaths = req.files ? req.files.map(file => `/uploads/${file.filename}`) : [];
+    
+    const complaint = new ComplaintSchema({
+      userId,
+      name,
+      address,
+      pincode,
+      taluk,
+      wardNo,
+      department,
+      district,
+      comment,
+      status: 'pending',
+      images: imagePaths,
+      assigned: false,
+      agentName: '',
+      canEscalate: true,
+      escalated: false
+    });
+
+    const result = await complaint.save();
+    res.status(201).json(result);
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: "Failed to register complaint" });
+    console.error("Error creating complaint:", error);
+    res.status(500).json({ error: "Failed to create complaint" });
   }
 });
 
@@ -574,6 +649,127 @@ app.delete("/agentUsers/:id", async (req, res) => {
       await AssignedComplaint.deleteMany({ agentId: id });
       
       return res.status(200).json({ message: "Agent deleted successfully" });
+    }
+  } catch (error) {
+    console.log(error);
+    res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+
+// Get users by district
+app.get("/users/district/:district", async (req, res) => {
+  try {
+    const { district } = req.params;
+    const users = await UserSchema.find({ district });
+    res.json(users);
+  } catch (error) {
+    console.error("Error fetching users by district:", error);
+    res.status(500).json({ error: "Failed to fetch users" });
+  }
+});
+
+// Get all districts
+app.get("/districts", async (req, res) => {
+   try {
+      const districts = [
+         "Tumakuru",
+         "Tiptur",
+         "Turuvekere",
+         "Kunigal",
+         "Gubbi",
+         "Koratagere",
+         "Madhugiri",
+         "Sira",
+         "Pavagada",
+         "Chikkanayakanahalli"
+      ];
+      res.json(districts);
+   } catch (error) {
+      console.error("Error fetching districts:", error);
+      res.status(500).json({ error: "Failed to fetch districts" });
+   }
+});
+
+// Escalate a complaint
+app.post("/complaint/:complaintId/escalate", async (req, res) => {
+  try {
+    const { complaintId } = req.params;
+    const { reason } = req.body;
+
+    const complaint = await ComplaintSchema.findById(complaintId);
+    if (!complaint) {
+      return res.status(404).json({ error: "Complaint not found" });
+    }
+
+    // Check if 24 hours have passed since complaint creation
+    const hoursSinceCreation = (Date.now() - complaint.createdAt) / (1000 * 60 * 60);
+    if (hoursSinceCreation < 24) {
+      return res.status(400).json({ 
+        error: "Complaint can only be escalated after 24 hours",
+        hoursRemaining: Math.ceil(24 - hoursSinceCreation)
+      });
+    }
+
+    // Update complaint with escalation details
+    complaint.escalated = true;
+    complaint.escalationReason = reason;
+    complaint.escalationDate = new Date();
+    await complaint.save();
+
+    res.json({
+      message: "Complaint escalated successfully",
+      complaint
+    });
+  } catch (error) {
+    console.error("Error escalating complaint:", error);
+    res.status(500).json({ error: "Failed to escalate complaint" });
+  }
+});
+
+// Update complaint status to enable escalation after 24 hours
+app.put("/complaint/:complaintId/update-escalation-status", async (req, res) => {
+  try {
+    const { complaintId } = req.params;
+    const complaint = await ComplaintSchema.findById(complaintId);
+    
+    if (!complaint) {
+      return res.status(404).json({ error: "Complaint not found" });
+    }
+
+    const hoursSinceCreation = (Date.now() - complaint.createdAt) / (1000 * 60 * 60);
+    if (hoursSinceCreation >= 24) {
+      complaint.canEscalate = true;
+      await complaint.save();
+      res.json({ message: "Escalation enabled", complaint });
+    } else {
+      res.json({ 
+        message: "Escalation not yet available",
+        hoursRemaining: Math.ceil(24 - hoursSinceCreation)
+      });
+    }
+  } catch (error) {
+    console.error("Error updating escalation status:", error);
+    res.status(500).json({ error: "Failed to update escalation status" });
+  }
+});
+
+app.get("/allcomplaints", async (req, res) => {
+  try {
+    // First get escalated complaints
+    const escalatedComplaints = await ComplaintSchema.find({ escalated: true })
+      .sort({ createdAt: -1 });
+
+    // Then get non-escalated complaints
+    const nonEscalatedComplaints = await ComplaintSchema.find({ escalated: false })
+      .sort({ createdAt: -1 });
+
+    // Combine them with escalated complaints first
+    const allComplaints = [...escalatedComplaints, ...nonEscalatedComplaints];
+
+    if (allComplaints.length === 0) {
+      return res.status(404).json({ error: "No complaints found" });
+    } else {
+      return res.status(200).json(allComplaints);
     }
   } catch (error) {
     console.log(error);
