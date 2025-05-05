@@ -50,8 +50,8 @@ const upload = multer({
 /**************************************** */
 app.use(express.json());
 app.use(cors({
-   origin: 'http://localhost:3000', 
-   credentials: true, // Allow credentials (cookies, authorization headers, etc.)
+   origin: ['http://localhost:3000', 'https://civic-bridge-prajwalssite.netlify.app'],
+  credentials: true // if using cookies 
 }));
 app.get('/',(req,res)=>{
   res.send({
