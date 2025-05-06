@@ -8,7 +8,7 @@ const userSchema = mongoose.Schema({
   password: { type: String, required: 'Password is require' },
   phone: { type: Number, required: 'Phone is require' }, 
   userType: { type: String, required: 'UserType is require' },
-  district: { type: String, required: 'District is require' },
+  district: String,
 }, {
   timestamps: true,
 });
